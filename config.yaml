@@ -1,0 +1,47 @@
+# litkg pipeline configuration
+# Change parameters here — never hardcode them in the litkg source.
+
+retrieval:
+  query: '"coral bleaching" AND "ocean acidification"'
+  limit: 50
+  # ROOT folder — litkg automatically creates a per-topic subfolder under
+  # this (derived from the quoted phrases in query above), so different
+  # topics never mix into the same corpus folder.
+  output_dir: "./corpora"
+  # Set true to force a fresh pygetpapers download even if a matching
+  # corpus already exists for this exact query + limit.
+  force_refresh: false
+
+# Keyword dictionary is AUTO-DERIVED from quoted phrases in retrieval.query
+# above — no manual list needed when you change topics. Add extra terms
+# here only if you want additional keywords beyond what's in the query.
+keyword_dictionary: []
+
+# Maps entity type -> RDF predicate name (local part only).
+entity_relation_map:
+  GPE: mentions_location
+  LOC: mentions_location
+  ORG: mentions_organization
+  DATE: mentions_date
+  KEYWORD: mentions_term
+
+# A generic, topic-independent noise list is built into litkg and applied
+# automatically. An automatic ORG frequency filter also runs each time.
+# Add terms here only for stubborn, topic-specific noise the automatic
+# mechanisms miss.
+structural_stoplist: []
+
+kg:
+  # ROOT folder — same per-topic auto-namespacing as retrieval.output_dir.
+  output_dir: "./kg_output"
+  # Placeholder namespace — replace with a real, resolvable PID namespace
+  # before publishing, per FAIR "Findable".
+  namespace: "https://example.org/semanticclimate/kg/"
+  license: "https://creativecommons.org/licenses/by/4.0/"
+  # Entity-linking cache — persists across runs and across topics, so
+  # re-running only queries Wikidata for entities not already resolved.
+  wikidata_cache: "./wikidata_cache.json"
+
+logging:
+  level: INFO
+  file: "./pipeline.log"
