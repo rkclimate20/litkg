@@ -124,6 +124,37 @@ def _cmd_analyze(args):
         print(rows.to_string(index=False))
 
 
+def _cmd_keyphrases(args):
+    """Views keyphrases.csv from an existing run — pure viewer, doesn't
+    need yake/spacy installed since it's just reading an already-generated
+    CSV. Note YAKE's score convention: LOWER avg_score = more relevant."""
+    if args.topic:
+        kg_dir = os.path.join("kg_output", args.topic)
+        path = os.path.join(kg_dir, "keyphrases.csv")
+        if not os.path.exists(path):
+            available = [
+                os.path.basename(os.path.dirname(p))
+                for p in glob.glob("kg_output/*/keyphrases.csv")
+            ]
+            print(f"No keyphrases.csv found at 'kg_output/{args.topic}/'.")
+            print(f"Topics with keyphrases: {available}" if available else "No topics have keyphrases.csv — was this run with an older litkg version?")
+            sys.exit(1)
+    else:
+        topic_dirs = sorted(
+            glob.glob("kg_output/*/keyphrases.csv"),
+            key=os.path.getmtime, reverse=True,
+        )
+        if not topic_dirs:
+            print("No keyphrases.csv found under any kg_output/ topic.")
+            sys.exit(1)
+        path = topic_dirs[0]
+        print(f"Using most recently modified topic folder: {os.path.dirname(path)}")
+
+    df = pd.read_csv(path)
+    print(f"\nTop {args.top} keyphrases by document frequency (lower avg_score = more relevant within a paper):\n")
+    print(df.head(args.top).to_string(index=False))
+
+
 def main():
     parser = argparse.ArgumentParser(prog="litkg", description="Literature -> knowledge graph pipeline")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -143,6 +174,11 @@ def main():
     p_analyze = sub.add_parser("analyze", help="Analyze a pipeline run's output")
     p_analyze.add_argument("--topic", default=None)
     p_analyze.set_defaults(func=_cmd_analyze)
+
+    p_keyphrases = sub.add_parser("keyphrases", help="View extracted keyphrases for a topic")
+    p_keyphrases.add_argument("--topic", default=None)
+    p_keyphrases.add_argument("--top", type=int, default=25)
+    p_keyphrases.set_defaults(func=_cmd_keyphrases)
 
     args = parser.parse_args()
     args.func(args)
