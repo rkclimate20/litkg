@@ -8,7 +8,7 @@ from litkg.config import load_config, setup_logging
 from litkg.extraction import load_paper_metadata, load_paper_text
 from litkg.filters import GENERIC_ACADEMIC_STOPLIST, find_frequent_org_noise
 from litkg.graph import build_graph
-from litkg.keyphrases import extract_corpus_keyphrases
+from litkg.keyphrases import aggregate_keyphrases, extract_keyphrases
 from litkg.ner import extract_mentions
 from litkg.retrieval import (
     derive_keywords_from_query,
@@ -65,7 +65,7 @@ def run_pipeline(config_path="config.yaml", query_override=None, limit_override=
     relation_map = cfg["entity_relation_map"]
 
     all_papers = []
-    papers_with_text = []
+    all_keyphrases = []
     for paper_dir in paper_units:
         text = load_paper_text(paper_dir)
         if not text:
@@ -75,7 +75,8 @@ def run_pipeline(config_path="config.yaml", query_override=None, limit_override=
         paper_id = metadata.get("doi") or os.path.basename(paper_dir)
         log.info("Extracted %d characters of text from %s", len(text), paper_dir)
 
-        papers_with_text.append({"paper_id": paper_id, "text": text})
+        paper_keyphrases = extract_keyphrases(text)
+        all_keyphrases.append({"paper_id": paper_id, "keyphrases": paper_keyphrases})
 
         mentions = extract_mentions(
             text, nlp, keyword_terms, relation_map,
@@ -126,9 +127,13 @@ def run_pipeline(config_path="config.yaml", query_override=None, limit_override=
     flat_df.to_csv(csv_path, index=False, encoding="utf-8-sig")
     log.info("Wrote validation CSV: %s", csv_path)
 
-    keyphrase_path = extract_corpus_keyphrases(papers_with_text, cfg["kg"]["output_dir"], log=log)
-    if keyphrase_path:
-        log.info("Keyphrases available at: %s", keyphrase_path)
+    keyphrase_df = aggregate_keyphrases(all_keyphrases)
+    keyphrase_path = os.path.join(cfg["kg"]["output_dir"], "keyphrases.csv")
+    keyphrase_df.to_csv(keyphrase_path, index=False, encoding="utf-8-sig")
+    log.info(
+        "Wrote keyphrase frequency table: %s (%d distinct phrases across %d papers)",
+        keyphrase_path, len(keyphrase_df), len(all_keyphrases),
+    )
 
     manifest_path = write_manifest(
         cfg, config_path, len(all_papers), len(graph), cfg["kg"]["output_dir"]
