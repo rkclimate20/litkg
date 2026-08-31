@@ -20,7 +20,7 @@ dependencies = [
     "pandas==2.2.2",
     "pycountry==24.6.1",
     "requests==2.32.5",
-    "yake==0.7.3",
+    "txt2phrases==1.0.3",
 ]
 
 [project.optional-dependencies]
