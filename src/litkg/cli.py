@@ -17,7 +17,42 @@ def _cmd_run(args):
         config_path=args.config,
         query_override=args.query,
         limit_override=args.limit,
+        skip_wikidata=args.skip_wikidata,
     )
+
+
+def _cmd_link(args):
+    """Standalone Wikidata linking on an already-extracted topic — doesn't
+    need spacy/pygetpapers, only rdflib/pandas/requests, and can be run
+    independently of (and repeatedly after) 'litkg run --skip-wikidata'."""
+    from litkg.linking import link_topic
+    from litkg.query import load_namespace
+    from litkg.config import load_config, setup_logging
+
+    if args.topic:
+        topic_dir = os.path.join("kg_output", args.topic)
+    else:
+        candidates = sorted(
+            glob.glob("kg_output/*/validation_report.csv"),
+            key=os.path.getmtime, reverse=True,
+        )
+        if not candidates:
+            print("No topic found under kg_output/. Run 'litkg run' first.")
+            sys.exit(1)
+        topic_dir = os.path.dirname(candidates[0])
+        print(f"Using most recently modified topic folder: {topic_dir}")
+
+    cfg = load_config(args.config)
+    log = setup_logging(cfg)
+    namespace = load_namespace(args.config)
+    cache_path = cfg.get("kg", {}).get("wikidata_cache", "./wikidata_cache.json")
+
+    try:
+        n_new = link_topic(topic_dir, namespace, log, cache_path=cache_path)
+        print(f"\nDone. {n_new} entities newly linked to Wikidata.")
+    except FileNotFoundError as e:
+        print(str(e))
+        sys.exit(1)
 
 
 def _cmd_query(args):
@@ -163,7 +198,13 @@ def main():
     p_run.add_argument("--config", default="config.yaml")
     p_run.add_argument("--query", default=None, help='Override retrieval.query, e.g. --query \'"carbon budget"\'')
     p_run.add_argument("--limit", type=int, default=None)
+    p_run.add_argument("--skip-wikidata", action="store_true", help="Skip Wikidata linking (fast, no network dependency for that step). Run 'litkg link' afterward to add links.")
     p_run.set_defaults(func=_cmd_run)
+
+    p_link = sub.add_parser("link", help="Run (or re-run) Wikidata linking on an already-extracted topic")
+    p_link.add_argument("--topic", default=None, help="Topic slug under kg_output/. Defaults to most recently modified.")
+    p_link.add_argument("--config", default="config.yaml")
+    p_link.set_defaults(func=_cmd_link)
 
     p_query = sub.add_parser("query", help="Query the graph for one entity")
     p_query.add_argument("entity", help="Entity name to search for")

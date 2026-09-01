@@ -8,7 +8,7 @@ from litkg.config import load_config, setup_logging
 from litkg.extraction import load_paper_metadata, load_paper_text
 from litkg.filters import GENERIC_ACADEMIC_STOPLIST, find_frequent_org_noise
 from litkg.graph import build_graph
-from litkg.keyphrases import aggregate_keyphrases, extract_keyphrases
+from litkg.keyphrases import extract_corpus_keyphrases
 from litkg.ner import extract_mentions
 from litkg.retrieval import (
     derive_keywords_from_query,
@@ -20,13 +20,19 @@ from litkg.review import flag_for_review, write_manifest
 from litkg.wikidata import link_entities_to_wikidata
 
 
-def run_pipeline(config_path="config.yaml", query_override=None, limit_override=None):
+def run_pipeline(config_path="config.yaml", query_override=None, limit_override=None, skip_wikidata=False):
     """Runs the full pipeline end to end. Returns the output directory
     containing knowledge_graph.ttl, validation_report.csv, and manifest.json.
 
     This is the same function both the CLI (`litkg run`) and any Python
     code importing litkg directly should call — the CLI is a thin wrapper
     around this, not a separate code path.
+
+    skip_wikidata: if True, skips entity linking entirely — extraction
+    (retrieval, NER, graph-building) is fast and mostly local, while
+    Wikidata linking is the slowest, most network-failure-prone step.
+    Run `litkg link --topic ...` afterward to add links without redoing
+    extraction.
     """
     cfg = load_config(config_path)
     log = setup_logging(cfg)
@@ -65,7 +71,7 @@ def run_pipeline(config_path="config.yaml", query_override=None, limit_override=
     relation_map = cfg["entity_relation_map"]
 
     all_papers = []
-    all_keyphrases = []
+    papers_with_text = []
     for paper_dir in paper_units:
         text = load_paper_text(paper_dir)
         if not text:
@@ -75,8 +81,7 @@ def run_pipeline(config_path="config.yaml", query_override=None, limit_override=
         paper_id = metadata.get("doi") or os.path.basename(paper_dir)
         log.info("Extracted %d characters of text from %s", len(text), paper_dir)
 
-        paper_keyphrases = extract_keyphrases(text)
-        all_keyphrases.append({"paper_id": paper_id, "keyphrases": paper_keyphrases})
+        papers_with_text.append({"paper_id": paper_id, "text": text})
 
         mentions = extract_mentions(
             text, nlp, keyword_terms, relation_map,
@@ -110,11 +115,21 @@ def run_pipeline(config_path="config.yaml", query_override=None, limit_override=
         if m["type"] in ("GPE", "ORG", "LOC")
     })
     wikidata_cache_path = cfg.get("kg", {}).get("wikidata_cache", "./wikidata_cache.json")
-    wikidata_links = link_entities_to_wikidata(unique_entities, log, cache_path=wikidata_cache_path)
-    log.info(
-        "Entity linking done: %d of %d entities matched to a Wikidata QID.",
-        sum(1 for v in wikidata_links.values() if v), len(unique_entities),
-    )
+
+    if skip_wikidata:
+        log.info(
+            "Skipping Wikidata linking (--skip-wikidata). %d entities left "
+            "unlinked — run 'litkg link --topic %s' later to add links "
+            "without redoing extraction.",
+            len(unique_entities), topic_slug,
+        )
+        wikidata_links = {}
+    else:
+        wikidata_links = link_entities_to_wikidata(unique_entities, log, cache_path=wikidata_cache_path)
+        log.info(
+            "Entity linking done: %d of %d entities matched to a Wikidata QID.",
+            sum(1 for v in wikidata_links.values() if v), len(unique_entities),
+        )
 
     graph, flat_df = build_graph(all_papers, cfg, wikidata_links=wikidata_links)
     flat_df = flag_for_review(flat_df, log, freq_noise=freq_noise)
@@ -127,13 +142,9 @@ def run_pipeline(config_path="config.yaml", query_override=None, limit_override=
     flat_df.to_csv(csv_path, index=False, encoding="utf-8-sig")
     log.info("Wrote validation CSV: %s", csv_path)
 
-    keyphrase_df = aggregate_keyphrases(all_keyphrases)
-    keyphrase_path = os.path.join(cfg["kg"]["output_dir"], "keyphrases.csv")
-    keyphrase_df.to_csv(keyphrase_path, index=False, encoding="utf-8-sig")
-    log.info(
-        "Wrote keyphrase frequency table: %s (%d distinct phrases across %d papers)",
-        keyphrase_path, len(keyphrase_df), len(all_keyphrases),
-    )
+    keyphrase_path = extract_corpus_keyphrases(papers_with_text, cfg["kg"]["output_dir"], log=log)
+    if keyphrase_path:
+        log.info("Keyphrases available at: %s", keyphrase_path)
 
     manifest_path = write_manifest(
         cfg, config_path, len(all_papers), len(graph), cfg["kg"]["output_dir"]
